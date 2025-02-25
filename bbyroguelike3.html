@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Best Buy Roguelike: Enhanced Edition</title>
+    <style>
+        body { font-family: monospace; padding: 20px; }
+        #game { max-width: 900px; margin: auto; display: none; }
+        #character-select { max-width: 900px; margin: auto; text-align: center; }
+        #map { white-space: pre; margin: 10px 0; }
+        #log { height: 250px; overflow-y: scroll; border: 1px solid; padding: 10px; }
+        button { border: none; padding: 8px 15px; margin: 5px; cursor: pointer; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        .character-option { display: inline-block; margin: 10px; padding: 10px; border: 1px solid #fff; }
+        .arrow-btn { font-size: 20px; width: 40px; height: 40px; }
+        #item-menu { display: none; position: absolute; background: #000; border: 1px solid; padding: 10px; }
+        #item-menu button { display: block; width: 100%; margin: 5px 0; }
+        h2 { margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div id="character-select">
+        <h1>Best Buy Roguelike: Choose Your Employee</h1>
+        <div class="character-option">
+            <h2>Sales Associate</h2>
+            <p>HP: 25 | Attack: 5 | Special: +50% XP from quests</p>
+            <button onclick="startGame('sales')">Select</button>
+        </div>
+        <div class="character-option">
+            <h2>Tech Support</h2>
+            <p>HP: 20 | Attack: 4 | Special: +5 HP heal per defeated enemy</p>
+            <button onclick="startGame('tech')">Select</button>
+        </div>
+        <div class="character-option">
+            <h2>Security Guard</h2>
+            <p>HP: 30 | Attack: 6 | Special: 50% chance to stun on attack</p>
+            <button onclick="startGame('security')">Select</button>
+        </div>
+    </div>
+
+    <div id="game">
+        <h1>Best Buy Roguelike</h1>
+        <div>Employee (<span id="class-name"></span>): <span id="player-stats">HP: 20/20 | Level: 1 | XP: 0</span></div>
+        <div>Inventory: <span id="inventory">Empty</span></div>
+        <div>Quest: <span id="quest">None</span></div>
+        <div>Customer: <span id="enemy-stats">None</span></div>
+        <div id="map"></div>
+        <div>
+            <button class="arrow-btn" onclick="move('up')">↑</button><br>
+            <button class="arrow-btn" onclick="move('left')">←</button>
+            <button class="arrow-btn" onclick="move('right')">→</button><br>
+            <button class="arrow-btn" onclick="move('down')">↓</button>
+            <button onclick="attack()">Attack</button>
+            <button id="use-item-btn" onclick="showItemMenu()">Use Item</button>
+            <button onclick="flee()">Flee</button>
+            <button id="restart" onclick="restartGame()" style="display: none;">Restart</button>
+        </div>
+        <div id="log"></div>
+        <div id="item-menu"></div>
+    </div>
+
+    <script>
+        let player = null;
+        let inventory = [];
+        let enemy = null;
+        let quest = null;
+        let characterType = null;
+
+        const characters = {
+            sales: { hp: 25, maxHp: 25, attack: 5, level: 1, xp: 0, x: 3, y: 3, special: "xpBoost" },
+            tech: { hp: 20, maxHp: 20, attack: 4, level: 1, xp: 0, x: 3, y: 3, special: "healOnKill" },
+            security: { hp: 30, maxHp: 30, attack: 6, level: 1, xp: 0, x: 3, y: 3, special: "stunChance" }
+        };
+
+        const colorSchemes = {
+            sales: { bg: "#002200", text: "#00ff00", button: "#00cc00", border: "#00ff00" },
+            tech: { bg: "#331100", text: "#ff8000", button: "#cc6600", border: "#ff8000" },
+            security: { bg: "#000022", text: "#00b7eb", button: "#0099cc", border: "#00b7eb" }
+        };
+
+        const map = [
+            ["#", "#", "#", "#", "#", "#", "#"],
+            ["#", ".", ".", ".", ".", ".", "#"],
+            ["#", ".", "#", ".", "#", ".", "#"],
+            ["#", ".", ".", ".", ".", ".", "#"],
+            ["#", ".", "#", ".", "#", ".", "#"],
+            ["#", ".", ".", ".", ".", ".", "#"],
+            ["#", "#", "#", "#", "#", "#", "#"]
+        ];
+
+        const enemyTypes = [
+            { name: "Angry Customer", hp: 10, attack: 3, actions: ["yells insults", "slams counter", "demands a refund"], art: "AC\n||\n/\\" },
+            { name: "Erratic Shopper", hp: 15, attack: 4, actions: ["flails wildly", "knocks over TVs", "screams"], art: "ES\n**\n/\\" },
+            { name: "Thief", hp: 12, attack: 5, actions: ["steals a phone", "runs for exit", "hides loot"], art: "TH\n||\n~~" },
+            { name: "Tech Ignorant", hp: 8, attack: 2, actions: ["asks dumb questions", "presses random buttons", "complains about Wi-Fi"], art: "TI\n??\n/\\" },
+            { name: "Karen", hp: 20, attack: 6, actions: ["demands manager", "threatens lawsuit", "records you"], art: "KA\n>|\n/\\" }
+        ];
+
+        const items = [
+            { name: "Price Gun", effect: "attack", value: 5, desc: "Boosts attack by 5 this turn" },
+            { name: "Walkie-Talkie", effect: "heal", value: 10, desc: "Heals 10 HP" },
+            { name: "Security Tag", effect: "stun", value: 1, desc: "Stuns enemy for 1 turn" },
+            { name: "Energy Drink", effect: "heal", value: 15, desc: "Heals 15 HP" },
+            { name: "First Aid Kit", effect: "heal", value: 25, desc: "Heals 25 HP" },
+            { name: "Manager’s Whistle", effect: "fleeBoost", value: 0.9, desc: "Guarantees flee success this turn" },
+            { name: "Flash Drive", effect: "xp", value: 10, desc: "Grants 10 XP instantly" },
+            { name: "Crowbar", effect: "attackPerm", value: 3, desc: "Permanently increases attack by 3" }
+        ];
+
+        const quests = [
+            { desc: "Restock TVs", goal: "Defeat 3 Erratic Shoppers", target: "Erratic Shopper", count: 3, progress: 0, reward: 15 },
+            { desc: "Catch Thieves", goal: "Defeat 2 Thieves", target: "Thief", count: 2, progress: 0, reward: 10 },
+            { desc: "Calm Karens", goal: "Defeat 1 Karen", target: "Karen", count: 1, progress: 0, reward: 20 }
+        ];
+
+        function log(message) {
+            document.getElementById("log").innerHTML += `<p>${message}</p>`;
+            document.getElementById("log").scrollTop = document.getElementById("log").scrollHeight;
+        }
+
+        function updateStats() {
+            document.getElementById("player-stats").textContent = `HP: ${player.hp}/${player.maxHp} | Level: ${player.level} | XP: ${player.xp}`;
+            document.getElementById("inventory").textContent = inventory.length ? inventory.map(i => i.name).join(", ") : "Empty";
+            document.getElementById("quest").textContent = quest ? `${quest.desc} (${quest.progress}/${quest.count})` : "None";
+            document.getElementById("enemy-stats").textContent = enemy ? `${enemy.name} | HP: ${enemy.hp}/${enemy.maxHp}` : "None";
+            renderMap();
+        }
+
+        function renderMap() {
+            let mapStr = "";
+            for (let y = 0; y < map.length; y++) {
+                for (let x = 0; x < map[y].length; x++) {
+                    if (x === player.x && y === player.y) mapStr += "P ";
+                    else if (enemy && x === enemy.x && y === enemy.y) mapStr += enemy.art.split("\n")[0] + " ";
+                    else mapStr += map[y][x] + " ";
+                }
+                mapStr += "\n";
+            }
+            if (enemy) mapStr += `\n${enemy.art.split("\n")[1]}\n${enemy.art.split("\n")[2]}`;
+            document.getElementById("map").textContent = mapStr;
+        }
+
+        function spawnEnemy() {
+            const type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+            enemy = { ...type, hp: type.hp + player.level * 2, maxHp: type.hp + player.level * 2, attack: type.attack + player.level, x: Math.floor(Math.random() * 5) + 1, y: Math.floor(Math.random() * 5) + 1, stunned: false };
+            while (enemy.x === player.x && enemy.y === player.y) {
+                enemy.x = Math.floor(Math.random() * 5) + 1;
+                enemy.y = Math.floor(Math.random() * 5) + 1;
+            }
+            log(`A ${enemy.name} appears in the store!`);
+            updateStats();
+        }
+
+        function assignQuest() {
+            if (!quest) {
+                quest = { ...quests[Math.floor(Math.random() * quests.length)] };
+                log(`New quest: ${quest.goal}`);
+                updateStats();
+            }
+        }
+
+        function checkQuest() {
+            if (quest && enemy && enemy.name === quest.target) {
+                quest.progress++;
+                if (quest.progress >= quest.count) {
+                    let reward = quest.reward;
+                    if (player.special === "xpBoost") reward = Math.floor(reward * 1.5);
+                    player.xp += reward;
+                    log(`Quest completed: ${quest.goal}! +${reward} XP`);
+                    quest = null;
+                    assignQuest();
+                }
+            }
+        }
+
+        function levelUp() {
+            if (player.xp >= player.level * 10) {
+                player.level++;
+                player.maxHp += 5;
+                player.hp = player.maxHp;
+                player.attack += 2;
+                player.xp = 0;
+                log(`You leveled up to Level ${player.level}! HP and attack increased.`);
+            }
+        }
+
+        function dropItem() {
+            if (Math.random() < 0.4) { // Increased drop rate to 40%
+                const item = items[Math.floor(Math.random() * items.length)];
+                inventory.push(item);
+                log(`The ${enemy.name} dropped a ${item.name}!`);
+            }
+        }
+
+        function move(direction) {
+            let newX = player.x, newY = player.y;
+            if (direction === "up") newY--;
+            if (direction === "down") newY++;
+            if (direction === "left") newX--;
+            if (direction === "right") newX++;
+
+            if (map[newY][newX] !== "#") {
+                player.x = newX;
+                player.y = newY;
+                log(`You move ${direction}.`);
+                if (enemy && player.x === enemy.x && player.y === enemy.y) {
+                    log(`You confront the ${enemy.name}!`);
+                } else if (!enemy && Math.random() < 0.5) {
+                    spawnEnemy();
+                }
+            } else {
+                log("You hit a wall!");
+            }
+            updateStats();
+        }
+
+        function attack() {
+            if (!enemy || (player.x !== enemy.x || player.y !== enemy.y)) {
+                log("No customer to confront here!");
+                return;
+            }
+            let damage = Math.max(1, player.attack - Math.floor(Math.random() * 3));
+            if (player.special === "stunChance" && Math.random() < 0.5) {
+                enemy.stunned = true;
+                log(`Your attack stuns the ${enemy.name}!`);
+            }
+            enemy.hp -= damage;
+            log(`You reprimand the ${enemy.name} for ${damage} damage!`);
+
+            if (enemy.hp <= 0) {
+                log(`You defeated the ${enemy.name}!`);
+                player.xp += 5 + player.level;
+                if (player.special === "healOnKill") {
+                    player.hp = Math.min(player.maxHp, player.hp + 5);
+                    log("You heal 5 HP from your tech expertise!");
+                }
+                dropItem();
+                checkQuest();
+                enemy = null;
+                levelUp();
+                setTimeout(spawnEnemy, 1000);
+            } else if (enemy.stunned) {
+                log(`The ${enemy.name} is stunned and can't act!`);
+                enemy.stunned = false;
+            } else {
+                enemyTurn();
+            }
+            updateStats();
+        }
+
+        function enemyTurn() {
+            if (enemy && !enemy.stunned && player.x === enemy.x && player.y === enemy.y) {
+                const action = enemy.actions[Math.floor(Math.random() * enemy.actions.length)];
+                const damage = Math.max(1, enemy.attack - Math.floor(Math.random() * 2));
+                player.hp -= damage;
+                log(`The ${enemy.name} ${action} and deals ${damage} damage!`);
+                if (player.hp <= 0) {
+                    log("You’ve been overwhelmed! Game Over.");
+                    endGame();
+                }
+            }
+        }
+
+        function showItemMenu() {
+            if (!inventory.length) {
+                log("Your inventory is empty!");
+                return;
+            }
+            const menu = document.getElementById("item-menu");
+            menu.style.display = "block";
+            menu.style.left = `${document.getElementById("use-item-btn").offsetLeft}px`;
+            menu.style.top = `${document.getElementById("use-item-btn").offsetTop + 40}px`;
+            menu.innerHTML = "<h3>Select an Item:</h3>";
+            inventory.forEach((item, index) => {
+                const btn = document.createElement("button");
+                btn.textContent = `${item.name} - ${item.desc}`;
+                btn.onclick = () => useItem(index);
+                menu.appendChild(btn);
+            });
+            const cancelBtn = document.createElement("button");
+            cancelBtn.textContent = "Cancel";
+            cancelBtn.onclick = () => menu.style.display = "none";
+            menu.appendChild(cancelBtn);
+        }
+
+        function useItem(index) {
+            const item = inventory.splice(index, 1)[0];
+            if (item.effect === "attack") {
+                player.attack += item.value;
+                log(`You use the ${item.name}! ${item.desc}`);
+                setTimeout(() => player.attack -= item.value, 1000);
+            } else if (item.effect === "heal") {
+                player.hp = Math.min(player.maxHp, player.hp + item.value);
+                log(`You use the ${item.name}! ${item.desc}`);
+            } else if (item.effect === "stun" && enemy) {
+                enemy.stunned = true;
+                log(`You use the ${item.name}! ${item.desc}`);
+            } else if (item.effect === "fleeBoost") {
+                log(`You use the ${item.name}! ${item.desc}`);
+                flee(item.value);
+                return;
+            } else if (item.effect === "xp") {
+                player.xp += item.value;
+                log(`You use the ${item.name}! ${item.desc}`);
+                levelUp();
+            } else if (item.effect === "attackPerm") {
+                player.attack += item.value;
+                log(`You use the ${item.name}! ${item.desc}`);
+            }
+            document.getElementById("item-menu").style.display = "none";
+            updateStats();
+            enemyTurn();
+        }
+
+        function flee(boost = 0.6) {
+            if (!enemy || (player.x !== enemy.x || player.y !== enemy.y)) {
+                log("No customer to flee from!");
+                return;
+            }
+            if (Math.random() < boost) {
+                log("You successfully fled from the customer!");
+                enemy = null;
+                setTimeout(spawnEnemy, 1000);
+            } else {
+                log("You failed to flee!");
+                enemyTurn();
+            }
+            updateStats();
+        }
+
+        function startGame(type) {
+            characterType = type;
+            player = { ...characters[type] };
+            const colors = colorSchemes[type];
+            document.body.style.backgroundColor = colors.bg;
+            document.body.style.color = colors.text;
+            document.querySelectorAll("button").forEach(btn => {
+                btn.style.backgroundColor = colors.button;
+                btn.style.color = "#000";
+            });
+            document.getElementById("log").style.borderColor = colors.border;
+            document.getElementById("item-menu").style.borderColor = colors.border;
+            document.getElementById("character-select").style.display = "none";
+            document.getElementById("game").style.display = "block";
+            document.getElementById("class-name").textContent = type === "sales" ? "Sales Associate" : type === "tech" ? "Tech Support" : "Security Guard";
+            log(`You’re a Best Buy ${document.getElementById("class-name").textContent}. The store is open...`);
+            assignQuest();
+            spawnEnemy();
+            updateStats();
+        }
+
+        function endGame() {
+            document.querySelectorAll("button:not(#restart)").forEach(b => b.disabled = true);
+            document.getElementById("restart").style.display = "inline";
+        }
+
+        function restartGame() {
+            document.getElementById("game").style.display = "none";
+            document.getElementById("character-select").style.display = "block";
+            document.getElementById("log").innerHTML = "";
+            document.querySelectorAll("button").forEach(b => b.disabled = false);
+            document.getElementById("restart").style.display = "none";
+            inventory = [];
+            enemy = null;
+            quest = null;
+        }
+    </script>
+</body>
+</html>
